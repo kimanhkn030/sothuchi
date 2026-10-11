@@ -272,6 +272,7 @@ function makeSample(){
 
 /* ---------- state & storage ---------- */
 const LS_KEY = "sothuchi.v1";
+const APP_VERSION = "1.3";
 let S, sample = false;
 function lsGet(){ try { const r = localStorage.getItem(LS_KEY); return r ? JSON.parse(r) : null; } catch(e){ return null; } }
 (function boot(){
@@ -294,7 +295,16 @@ function leaveSample(){
 let persisted = null;
 async function initDevice(){
   try { if (navigator.storage && navigator.storage.persist){ persisted = await navigator.storage.persisted() || await navigator.storage.persist(); if (tab==="set") render(); } } catch(e){}
-  if ("serviceWorker" in navigator && location.protocol === "https:"){ try { await navigator.serviceWorker.register("sw.js"); } catch(e){} }
+  if ("serviceWorker" in navigator && location.protocol === "https:"){
+    try {
+      const hadController = !!navigator.serviceWorker.controller;
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => { if (hadController && !reloaded){ reloaded = true; location.reload(); } });
+      const reg = await navigator.serviceWorker.register("sw.js", { updateViaCache: "none" });
+      reg.update().catch(()=>{});
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reg.update().catch(()=>{}); });
+    } catch(e){}
+  }
 }
 // another tab or window changed the notebook
 window.addEventListener("storage", e => { if (e.key !== LS_KEY || !e.newValue) return; try { S = JSON.parse(e.newValue); sample = false; render(true); } catch(_){} });
@@ -571,6 +581,7 @@ function renderSet(){
       ${ui.csvText!==null?`<textarea class="csv" id="csvBox" readonly aria-label="Nội dung CSV">${esc(ui.csvText)}</textarea>`:""}
     </div>
 
+    <p class="small muted" style="text-align:center;margin:4px 0 0">Phiên bản ${APP_VERSION}</p>
     <div class="card"><h2>Xóa dữ liệu</h2><p class="small muted" style="margin:6px 0 10px">Xóa mọi khoản thu chi. Danh mục và ngân sách được giữ lại.</p>
       <button class="btn danger ${ui.wipeArm?"armed":""}" data-act="wipe">${ui.wipeArm?"Nhấn lần nữa để xóa hết":"Xóa toàn bộ khoản thu chi"}</button></div>
   </div>`;
@@ -646,7 +657,7 @@ function importMoneyNote(text){
 }
 
 function importCSV(text){
-  if (/^﻿?#DAILY_DATAS/m.test(text)) return importMoneyNote(text.replace(/^﻿/,""));
+  if (/#DAILY_DATAS/.test(text) || /inputDateString/.test(text)) return importMoneyNote(text.replace(/^\uFEFF/,""));
   const rows = parseCSV(text.replace(/^﻿/,"")).filter(r=>r.some(c=>c.trim())); if (rows.length<2){ toast("File không có dòng dữ liệu nào."); return; }
   const h = rows[0].map(s=>s.trim().toLowerCase());
   const col = names => h.findIndex(x=>names.includes(x));
