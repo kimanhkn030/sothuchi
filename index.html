@@ -208,6 +208,9 @@ button.row:active{transform:scale(.99)}
 textarea.csv{width:100%;min-height:120px;border-radius:12px;border:1px solid var(--line);background:var(--sunk);padding:10px;font:12px/1.4 ui-monospace,Menlo,monospace;color:var(--ink)}
 .ver{font-size:12px;color:var(--muted);text-align:center;margin:6px 0 0}
 
+.obud{margin-top:14px;padding-top:12px;border-top:1px dashed var(--line)}
+.obud .a{font-weight:600}
+.other-row{border-top:0!important;background:linear-gradient(90deg,var(--accent-soft),transparent 70%);margin:4px -8px 0;padding-left:8px;padding-right:8px;border-radius:12px}
 /* recurring */
 .repeat{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .hint{font-size:13px;background:var(--accent-soft);border-radius:var(--r);padding:9px 12px}
@@ -354,7 +357,7 @@ function makeSample(){
 
 /* ---------- state & storage ---------- */
 const LS_KEY = "sothuchi.v1";
-const APP_VERSION = "1.6";
+const APP_VERSION = "1.7";
 let S, sample = false;
 function lsGet(){ try { const r = localStorage.getItem(LS_KEY); return r ? JSON.parse(r) : null; } catch(e){ return null; } }
 (function boot(){
@@ -397,6 +400,29 @@ function catById(id){ return S.settings.exp.find(c=>c.id===id) || S.settings.inc
 const colorOf = c => (c.hex && /^#[0-9a-f]{6}$/i.test(c.hex)) ? c.hex : COLORS[(c.col ?? 0) % COLORS.length];
 const monthItems = ym => S.months[ym] || [];
 function totals(items){ let i=0,e=0; for (const x of items){ if (x.t==="i") i+=x.a; else e+=x.a; } return {i,e}; }
+/* "Khác" budget: covers the Khác category plus every expense category without a budget of its own */
+const OTHER = "__other";
+const isOtherCat = c => !!c && c.name.trim().toLowerCase() === "khác";
+const otherCat = () => S.settings.exp.find(c => !c.hidden && isOtherCat(c));
+function ensureOtherCat(){
+  if (otherCat()) return false;
+  const L = S.settings.exp, hid = L.find(isOtherCat);
+  if (hid) delete hid.hidden; else L.push({id:"c"+uid(), ic:"📦", name:"Khác", col:L.length % COLORS.length});
+  return true;
+}
+function budgetPlan(items){
+  const B = S.settings.budgets, oc = otherCat(), other = Number(B[OTHER]) || 0;
+  const own = S.settings.exp.filter(c => !(oc && c.id === oc.id) && Number(B[c.id]) > 0);
+  const ownIds = new Set(own.map(c => c.id));
+  let spent = 0, otherSpent = 0, otherCats = new Set();
+  for (const x of items) if (x.t === "e"){ spent += x.a; if (!ownIds.has(x.c)){ otherSpent += x.a; otherCats.add(x.c); } }
+  return { totalB: own.reduce((s,c)=>s+Number(B[c.id]),0) + other, spent, other, otherSpent, otherCats: otherCats.size, oc };
+}
+function migrateOther(){             // an old budget set directly on "Khác" becomes the Khác budget
+  const oc = otherCat(), B = S.settings.budgets;
+  if (oc && Number(B[oc.id]) > 0 && !(Number(B[OTHER]) > 0)){ B[OTHER] = Number(B[oc.id]); delete B[oc.id]; return true; }
+  return false;
+}
 function balanceThrough(ym){ let b = Number(S.settings.opening)||0; for (const k in S.months){ if (k <= ym){ const t = totals(S.months[k]); b += t.i - t.e; } } return b; }
 
 /* ---------- recurring (thu chi cố định) ---------- */
@@ -611,14 +637,17 @@ function renderRep(){
 
   let budgetCard = "";
   if (isM && type==="e"){
-    const budIds = Object.keys(B).filter(k=>Number(B[k])>0);
-    const totalB = budIds.reduce((s,k)=>s+Number(B[k]),0);
-    if (totalB>0){
-      const spent = S.settings.onlyBudgeted ? items.filter(x=>x.t==="e" && budIds.includes(x.c)).reduce((s,x)=>s+x.a,0) : t.e;
-      const left = totalB - spent; const pc = spent/totalB;
+    const P = budgetPlan(items);
+    if (P.totalB>0){
+      const left = P.totalB - P.spent; const pc = P.spent/P.totalB;
       let perDay = "";
       if (ui.repYm===ymOf(TODAY) && left>0){ const [y,m]=ui.repYm.split("-").map(Number); const rem = new Date(y,m,0).getDate() - Number(TODAY.slice(8)) + 1; perDay = `<div class="small muted" style="margin-top:8px">Còn ${rem} ngày, mỗi ngày có thể chi khoảng <b class="num" style="color:var(--ink)">${fmt(left/rem)}</b></div>`; }
-      budgetCard = `<div class="card"><h2>Ngân sách tháng</h2><div class="budgettop"><span class="big num ${left<0?"exp":""}">${left<0?"Vượt ":"Còn "}${fmt(Math.abs(left))}</span><span class="small muted num">đã chi ${NF.format(spent)} / ${NF.format(totalB)}</span></div><div class="bar" style="height:8px"><i class="${pc>1?"over":pc>.85?"warn":""}" style="width:${Math.min(100,pc*100)}%"></i></div>${perDay}</div>`;
+      const opc = P.other ? P.otherSpent/P.other : 0;
+      const otherRow = (P.other || P.otherSpent) ? `<div class="obud">
+          <div class="budgettop" style="margin:0"><span class="a">${esc((P.oc||{}).ic||"📦")} Khác</span><span class="small num ${P.other && P.otherSpent>P.other?"exp":"muted"}">${P.other ? `${short(P.otherSpent)} / ${short(P.other)} · ${P.otherSpent>P.other?"vượt "+short(P.otherSpent-P.other):"còn "+short(P.other-P.otherSpent)}` : `đã chi ${short(P.otherSpent)} · chưa đặt ngân sách`}</span></div>
+          ${P.other ? `<div class="bar"><i class="${opc>1?"over":opc>.85?"warn":""}" style="width:${Math.min(100,opc*100)}%"></i></div>` : ""}
+          <div class="small muted" style="margin-top:4px">Tính mục Khác và mọi mục chưa có ngân sách riêng.</div></div>` : "";
+      budgetCard = `<div class="card"><h2>Ngân sách tháng</h2><div class="budgettop"><span class="big num ${left<0?"exp":""}">${left<0?"Vượt ":"Còn "}${fmt(Math.abs(left))}</span><span class="small muted num">đã chi ${NF.format(P.spent)} / ${NF.format(P.totalB)}</span></div><div class="bar" style="height:8px"><i class="${pc>1?"over":pc>.85?"warn":""}" style="width:${Math.min(100,pc*100)}%"></i></div>${perDay}${otherRow}</div>`;
     }
   }
   const year = !isM ? yearChart(ui.repY) : "";
@@ -661,8 +690,9 @@ function renderSet(){
     <div class="card"><h2>Lưu trữ</h2><p class="small" style="margin:6px 0 0">Sổ chỉ nằm trên thiết bị này, không gửi đi đâu. ${persisted===true ? "Trình duyệt đã đồng ý giữ dữ liệu lâu dài." : "Trình duyệt có thể tự dọn dữ liệu nếu lâu ngày không mở."} Nên tải file CSV mỗi tháng để sao lưu, và dùng file đó để chuyển sang máy mới.</p></div>
 
     <div class="card"><h2>Ngân sách mỗi tháng</h2>
-      <div style="margin-top:4px">${st.exp.filter(c=>!c.hidden).map(c=>`<div class="row"><span class="ic" style="background:${colorOf(c)}26">${esc(c.ic)}</span><span class="tx"><div class="a">${esc(c.name)}</div></span>${moneyInput("b-"+c.id, Number(st.budgets[c.id])||0, `data-budget="${c.id}"`)}</div>`).join("")}</div>
-      <label class="toggle" for="onlyB"><span>Tổng ngân sách chỉ tính các danh mục đã đặt ngân sách</span><input type="checkbox" id="onlyB" ${st.onlyBudgeted?"checked":""}></label>
+      <div style="margin-top:4px">${st.exp.filter(c=>!c.hidden && !isOtherCat(c)).map(c=>`<div class="row"><span class="ic" style="background:${colorOf(c)}26">${esc(c.ic)}</span><span class="tx"><div class="a">${esc(c.name)}</div></span>${moneyInput("b-"+c.id, Number(st.budgets[c.id])||0, `data-budget="${c.id}"`)}</div>`).join("")}
+        <div class="row other-row"><span class="ic" style="background:var(--accent-soft)">${esc((otherCat()||{}).ic||"📦")}</span><span class="tx"><div class="a">Khác</div><div class="b">Lặt vặt và mục chưa đặt ngân sách</div></span>${moneyInput("b-"+OTHER, Number(st.budgets[OTHER])||0, `data-budget="${OTHER}"`)}</div></div>
+      <div class="bal num"><span class="muted">Tổng ngân sách tháng</span><b id="btotal">${fmt(budgetPlan([]).totalB)}</b></div>
     </div>
 
     <div class="card"><h2>Thu chi cố định</h2>
@@ -754,6 +784,11 @@ function importMoneyNote(text){
   let nb = 0;
   for (const k in latest){ const amt = Number(latest[k].amount); const id = map[k];
     if (k !== "0" && id && amt > 0 && (fresh || !S.settings.budgets[id])){ S.settings.budgets[id] = amt; nb++; } }
+  const tot = latest["0"] ? Number(latest["0"].amount) : 0;
+  if (tot > 0 && !(Number(S.settings.budgets[OTHER]) > 0)){
+    const sumCats = Object.entries(S.settings.budgets).filter(([k])=>k!==OTHER).reduce((s,[,v])=>s+Number(v),0);
+    if (tot > sumCats){ S.settings.budgets[OTHER] = tot - sumCats; ensureOtherCat(); nb++; }
+  }
   const bal = Number((books[0]||{}).initialBalance); if (fresh && bal > 0) S.settings.opening = bal;
   saveSettings(); touched.forEach(saveMonth);
   const last = [...touched].sort().pop(); if (last){ ui.calYm = last; ui.calSel = last+"-01"; ui.repYm = last; }
@@ -880,9 +915,11 @@ $("#view").addEventListener("input", e => {
 $("#view").addEventListener("change", e => {
   const t = e.target;
   if (t.id==="f-date" && t.value){ ui.date=t.value; render(); return; }
-  if (t.dataset.budget){ const was=leaveSample(); const n=parseMoney(t.value); if (n) S.settings.budgets[t.dataset.budget]=n; else delete S.settings.budgets[t.dataset.budget]; saveSettings(); if (was) render(); return; }
+  if (t.dataset.budget){ const was=leaveSample(); const n=parseMoney(t.value); if (n) S.settings.budgets[t.dataset.budget]=n; else delete S.settings.budgets[t.dataset.budget];
+    let added = false; if (t.dataset.budget===OTHER && n) added = ensureOtherCat();
+    saveSettings(); if (was || added) render(); else { const bt=$("#btotal"); if (bt) bt.textContent = fmt(budgetPlan([]).totalB); }
+    if (added) toast("Đã thêm mục Khác để chọn khi ghi sổ"); return; }
   if (t.id==="opening"){ const was=leaveSample(); S.settings.opening=parseMoney(t.value); saveSettings(); if (was) render(); return; }
-  if (t.id==="onlyB"){ const was=leaveSample(); S.settings.onlyBudgeted=t.checked; saveSettings(); if (was) render(); return; }
   if (t.dataset.catnm || t.dataset.catic){ const id=t.dataset.catnm||t.dataset.catic; const was=leaveSample(); const c=catsOf(ui.setCatType).find(x=>x.id===id);
     if (c){ if (t.dataset.catnm){ const nm=t.value.trim(); if (nm) c.name=nm; else t.value=c.name; } else { c.ic=t.value.trim()||"•"; } saveSettings(); } if (was) render(); return; }
   if (t.id==="csvIn" && t.files && t.files[0]){ const fr=new FileReader(); fr.onload=()=>importCSV(String(fr.result)); fr.onerror=()=>toast("Không đọc được file."); fr.readAsText(t.files[0]); t.value=""; }
@@ -895,7 +932,7 @@ document.addEventListener("keydown", e => {
   else if (k==="Escape") pressKey("C"); else if (k==="Enter"){ e.preventDefault(); submitEntry(); } else return;
 });
 
-{ const added = runRecurring(); render(); if (added) toast("Đã tự ghi " + added + " khoản cố định"); }
+{ if (!sample && migrateOther()) saveSettings(); const added = runRecurring(); render(); if (added) toast("Đã tự ghi " + added + " khoản cố định"); }
 initDevice();
 })();
 </script>
