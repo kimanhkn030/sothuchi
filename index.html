@@ -45,6 +45,9 @@
 html,body{margin:0}
 img{max-width:100%}
 [hidden]{display:none!important}
+html{touch-action:manipulation;-webkit-text-size-adjust:100%}
+button,label,.cats-scroll{touch-action:manipulation}
+.keypad,.cats,.e-head,.tabbar{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.45;-webkit-tap-highlight-color:transparent;-webkit-font-smoothing:antialiased}
 button,input,select{font:inherit;color:inherit}
 button{cursor:pointer;border:0;background:none;transition:transform .16s var(--ease),background-color .2s,color .2s,box-shadow .2s,opacity .2s}
@@ -112,7 +115,8 @@ h2{font-size:15px;font-weight:600;color:var(--ink);margin:0;letter-spacing:-.005
 .keypad{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .key{height:50px;border-radius:14px;background:var(--surface);border:1px solid var(--line);font-size:21px;font-weight:500;font-variant-numeric:tabular-nums}
 .key.op{background:var(--sunk);border-color:transparent;color:var(--accent);font-weight:600}
-.key:active{transform:scale(.94);background:var(--accent-soft)}
+.key:active,.key.down{transform:scale(.94);background:var(--accent-soft)}
+.key{transition:transform .08s,background-color .12s}
 .submit{height:54px;border-radius:16px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:16px;width:100%;box-shadow:var(--lift);letter-spacing:.005em}
 .submit:disabled{opacity:.4;cursor:default;box-shadow:none}
 .editbar{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap;background:var(--accent-soft);border-radius:var(--r);padding:8px 10px 8px 14px;font-size:13.5px}
@@ -233,6 +237,8 @@ body.locked{overflow:hidden;overscroll-behavior:none}
 .e-date .datepick{background:none;height:40px;font-size:14px;white-space:nowrap;overflow:hidden}
 .e-note{display:flex;gap:8px;flex:none}
 .e-note .field{flex:1;min-width:0;height:40px}
+input,select,textarea{font-size:16px}
+input.money{font-size:16px}
 .repchip{flex:none;max-width:52%;height:40px;padding:0 12px;border-radius:12px;background:var(--sunk);font-size:13px;font-weight:600;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .repchip.on{background:var(--accent-soft);color:var(--accent)}
 .cats-scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;margin:0 -8px;padding:2px 8px 10px;-webkit-mask-image:linear-gradient(#000 calc(100% - 16px),transparent);mask-image:linear-gradient(#000 calc(100% - 16px),transparent)}
@@ -348,7 +354,7 @@ function makeSample(){
 
 /* ---------- state & storage ---------- */
 const LS_KEY = "sothuchi.v1";
-const APP_VERSION = "1.5";
+const APP_VERSION = "1.6";
 let S, sample = false;
 function lsGet(){ try { const r = localStorage.getItem(LS_KEY); return r ? JSON.parse(r) : null; } catch(e){ return null; } }
 (function boot(){
@@ -797,8 +803,19 @@ $("#tabs").addEventListener("click", e => { const b = e.target.closest("button")
   tab = b.dataset.tab; ui.wipeArm=false; ui.delArm=false; ui.recurArm=null; render(); window.scrollTo(0,0);
   const v = $("#view"); v.classList.remove("enter"); void v.offsetWidth; v.classList.add("enter"); clearTimeout(v._t); v._t = setTimeout(()=>v.classList.remove("enter"), 700); });
 
+let lastKeyDown = 0;
+$("#view").addEventListener("pointerdown", e => {
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  const b = e.target.closest('[data-act="key"]'); if (!b) return;
+  e.preventDefault();                       // keep focus and selection where they are
+  lastKeyDown = Date.now();
+  pressKey(b.dataset.v);
+  if (navigator.vibrate) { try { navigator.vibrate(6); } catch(_){} }
+  b.classList.add("down"); setTimeout(() => b.classList.remove("down"), 120);
+});
 $("#view").addEventListener("click", async e => {
   const b = e.target.closest("[data-act]"); if (!b) return; const act = b.dataset.act, v = b.dataset.v;
+  if (act === "key" && Date.now() - lastKeyDown < 800) return;   // already handled on touch-down
   switch(act){
     case "clearSample": leaveSample(); toast("Sổ trống đã sẵn sàng"); render(); break;
     case "type": if (ui.type!==v){ ui.type=v; ui.cat=null; render(); } break;
