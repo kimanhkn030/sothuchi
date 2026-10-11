@@ -1,7 +1,7 @@
 // Lets the app open without internet. Your notebook data is NOT stored here;
 // it lives in the browser's localStorage and is never sent anywhere.
 // When you change index.html, bump VERSION so phones pick up the new copy.
-const VERSION = "sothuchi-v1";
+const VERSION = "sothuchi-v2";
 const SHELL = ["./", "index.html", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"];
 

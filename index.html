@@ -302,7 +302,7 @@ window.addEventListener("storage", e => { if (e.key !== LS_KEY || !e.newValue) r
 /* ---------- lookups ---------- */
 const catsOf = t => t==="i" ? S.settings.inc : S.settings.exp;
 function catById(id){ return S.settings.exp.find(c=>c.id===id) || S.settings.inc.find(c=>c.id===id) || {id, ic:"•", name:"Danh mục đã xóa", col:8}; }
-const colorOf = c => COLORS[(c.col ?? 0) % COLORS.length];
+const colorOf = c => (c.hex && /^#[0-9a-f]{6}$/i.test(c.hex)) ? c.hex : COLORS[(c.col ?? 0) % COLORS.length];
 const monthItems = ym => S.months[ym] || [];
 function totals(items){ let i=0,e=0; for (const x of items){ if (x.t==="i") i+=x.a; else e+=x.a; } return {i,e}; }
 function balanceThrough(ym){ let b = Number(S.settings.opening)||0; for (const k in S.months){ if (k <= ym){ const t = totals(S.months[k]); b += t.i - t.e; } } return b; }
@@ -591,7 +591,62 @@ function parseCSV(text){
     else if (ch==='"') q=true; else if (ch===','||ch===';'){ r.push(f); f=""; } else if (ch==='\n'){ r.push(f); rows.push(r); r=[]; f=""; } else if (ch!=='\r') f+=ch; }
   if (f||r.length){ r.push(f); rows.push(r); } return rows;
 }
+/* ---------- MoneyNote ("Sổ thu chi" của Komorebi) export ---------- */
+const MN_ICONS = {"ăn uống":"🍜","chi tiêu hàng ngày":"🛒","quần áo":"👕","mỹ phẩm":"💄","phí giao lưu":"🍻","y tế":"💊","giáo dục":"📚","tiền điện":"💡","đi lại":"🛵","phí liên lạc":"📱","tiền nhà":"🏠","mua sắm":"🛍️","tiền lương":"💼","tiền phụ cấp":"🧾","tiền thưởng":"🏆","thu nhập phụ":"💻","đầu tư":"📈","thu nhập tạm thời":"🧧","khác":"📦"};
+function mnSections(text){
+  const out = {}; let cur = null;
+  for (const line of text.split(/\r?\n/)){
+    if (line.startsWith("#")){ cur = line.slice(1).trim(); out[cur] = []; continue; }
+    if (cur && line.trim()) out[cur].push(line);
+  }
+  const objs = {};
+  for (const k in out){ const rows = parseCSV(out[k].join("\n")); const h = (rows[0]||[]).map(s=>s.trim());
+    objs[k] = rows.slice(1).map(r => Object.fromEntries(h.map((name,i)=>[name,(r[i]??"").trim()]))); }
+  return objs;
+}
+function importMoneyNote(text){
+  const sec = mnSections(text);
+  const daily = sec.DAILY_DATAS || [], cats = sec.CATEGORIES || [], buds = sec.BUDGET_SETTINGS || [], books = sec.ACCOUNT_BOOKINGS || [], fixed = sec.FIXED_COST_SETTINGS || [];
+  const hadData = !sample && Object.values(S.months).some(a => a.length);
+  leaveSample();
+  const fresh = !hadData;                    // empty notebook: take MoneyNote's categories as they are
+  if (fresh){ S.settings.exp = []; S.settings.inc = []; }
+  const map = {}; let newCats = 0;
+  [...cats].sort((a,b)=>Number(a.index)-Number(b.index)).forEach(c => {
+    if (!c.name) return;
+    const t = c.type === "1" ? "i" : "e"; const list = catsOf(t);
+    let mine = list.find(x => x.name.toLowerCase() === c.name.toLowerCase());
+    if (!mine){ mine = {id:"mn"+c.id, ic:MN_ICONS[c.name.toLowerCase()]||"•", name:c.name, col:list.length%COLORS.length, ...(/^[0-9a-f]{6}$/i.test(c.color)?{hex:"#"+c.color}:{})}; list.push(mine); newCats++; }
+    if (mine.hidden) delete mine.hidden;
+    map[c.id] = mine.id;
+  });
+  const fallback = t => { const list = catsOf(t); let k = list.find(x=>x.name==="Khác"); if (!k){ k = {id:"c"+uid(), ic:"📦", name:"Khác", col:list.length%COLORS.length}; list.push(k); } return k.id; };
+  const seen = new Set(Object.values(S.months).flat().map(x=>x.id));
+  const touched = new Set(); let n = 0, skipped = 0;
+  for (const r of daily){
+    const m = (r.inputDateString||"").match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/); const a = Math.round(Number(r.amount));
+    if (!m || !(a > 0)) continue;
+    const d = m[1]+"-"+pad(m[2])+"-"+pad(m[3]); const t = r.type === "1" ? "i" : "e";
+    const id = "mn-" + (r.createdAt || (d+"-"+a+"-"+r.memo)).replace(/[^0-9A-Za-z]/g,"");
+    if (seen.has(id)){ skipped++; continue; } seen.add(id);
+    (S.months[ymOf(d)] ||= []).push({id, t, c: map[r.categoryId] || fallback(t), a, d, n: r.memo || ""});
+    touched.add(ymOf(d)); n++;
+  }
+  // budgets: newest setting per category; "-1" means none, category 0 is MoneyNote's overall total
+  const latest = {};
+  for (const b of buds){ if (!latest[b.tempCategoryId] || b.time > latest[b.tempCategoryId].time) latest[b.tempCategoryId] = b; }
+  let nb = 0;
+  for (const k in latest){ const amt = Number(latest[k].amount); const id = map[k];
+    if (k !== "0" && id && amt > 0 && (fresh || !S.settings.budgets[id])){ S.settings.budgets[id] = amt; nb++; } }
+  const bal = Number((books[0]||{}).initialBalance); if (fresh && bal > 0) S.settings.opening = bal;
+  saveSettings(); touched.forEach(saveMonth);
+  const last = [...touched].sort().pop(); if (last){ ui.calYm = last; ui.calSel = last+"-01"; ui.repYm = last; }
+  toast(`Đã nhập ${n} khoản` + (skipped ? `, bỏ qua ${skipped} khoản đã có` : "") + (nb ? `, ${nb} ngân sách` : "") + (fixed.length ? ". Khoản cố định cần tạo lại thủ công." : ""));
+  tab = "cal"; render(); window.scrollTo(0,0);
+}
+
 function importCSV(text){
+  if (/^﻿?#DAILY_DATAS/m.test(text)) return importMoneyNote(text.replace(/^﻿/,""));
   const rows = parseCSV(text.replace(/^﻿/,"")).filter(r=>r.some(c=>c.trim())); if (rows.length<2){ toast("File không có dòng dữ liệu nào."); return; }
   const h = rows[0].map(s=>s.trim().toLowerCase());
   const col = names => h.findIndex(x=>names.includes(x));
@@ -698,7 +753,7 @@ $("#view").addEventListener("change", e => {
   if (t.id==="onlyB"){ const was=leaveSample(); S.settings.onlyBudgeted=t.checked; saveSettings(); if (was) render(); return; }
   if (t.dataset.catnm || t.dataset.catic){ const id=t.dataset.catnm||t.dataset.catic; const was=leaveSample(); const c=catsOf(ui.setCatType).find(x=>x.id===id);
     if (c){ if (t.dataset.catnm){ const nm=t.value.trim(); if (nm) c.name=nm; else t.value=c.name; } else { c.ic=t.value.trim()||"•"; } saveSettings(); } if (was) render(); return; }
-  if (t.id==="csvIn" && t.files && t.files[0]){ const fr=new FileReader(); fr.onload=()=>importCSV(String(fr.result)); fr.onerror=()=>toast("Không đọc được file."); fr.readAsText(t.files[0]); }
+  if (t.id==="csvIn" && t.files && t.files[0]){ const fr=new FileReader(); fr.onload=()=>importCSV(String(fr.result)); fr.onerror=()=>toast("Không đọc được file."); fr.readAsText(t.files[0]); t.value=""; }
 });
 document.addEventListener("keydown", e => {
   if (tab!=="entry" || e.metaKey || e.ctrlKey || e.altKey) return;
