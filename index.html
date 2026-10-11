@@ -220,6 +220,42 @@ textarea.csv{width:100%;min-height:120px;border-radius:12px;border:1px solid var
 .tabbar button[aria-current="page"] svg{background:var(--accent-soft)}
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:13.5px;z-index:9;max-width:calc(100% - 32px);text-align:center;box-shadow:var(--lift);animation:rise .25s var(--ease)}
 
+/* entry: one fixed screen. Header and note on top, categories scroll in the middle,
+   amount + keypad pinned above the tab bar so nothing needs page scrolling. */
+body.locked{overflow:hidden;overscroll-behavior:none}
+.entry{position:fixed;left:0;right:0;top:env(safe-area-inset-top,0px);bottom:var(--dockb,calc(66px + env(safe-area-inset-bottom,0px)));max-width:540px;margin:0 auto;padding:10px 16px 10px;display:flex;flex-direction:column;gap:8px}
+.entry>.banner{margin:0}
+.e-head{display:flex;gap:8px;align-items:center;flex:none}
+.e-head .seg{flex:none;width:118px}
+.e-head .seg button{padding:8px 6px}
+.e-date{flex:1;min-width:0;display:flex;align-items:center;background:var(--sunk);border-radius:12px;height:40px}
+.e-date .nav{width:36px;height:40px;font-size:21px;line-height:1;color:var(--muted);flex:none;border-radius:12px}
+.e-date .datepick{background:none;height:40px;font-size:14px;white-space:nowrap;overflow:hidden}
+.e-note{display:flex;gap:8px;flex:none}
+.e-note .field{flex:1;min-width:0;height:40px}
+.repchip{flex:none;max-width:52%;height:40px;padding:0 12px;border-radius:12px;background:var(--sunk);font-size:13px;font-weight:600;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.repchip.on{background:var(--accent-soft);color:var(--accent)}
+.cats-scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;margin:0 -8px;padding:2px 8px 10px;-webkit-mask-image:linear-gradient(#000 calc(100% - 16px),transparent);mask-image:linear-gradient(#000 calc(100% - 16px),transparent)}
+.dock{flex:none;display:flex;flex-direction:column;gap:8px}
+.dock .amount{flex-direction:row;align-items:center;justify-content:space-between;gap:10px;min-height:66px;padding:8px 16px 8px 24px}
+.amt-r{display:flex;flex-direction:column;align-items:flex-end;min-width:0;flex:1}
+.dock .amount .val{font-size:clamp(26px,8vw,34px)}
+.dock .amount .expr{min-height:0;font-size:12.5px}
+.pick{display:flex;align-items:center;gap:8px;min-width:0;max-width:45%;font-size:13.5px;color:var(--muted);font-weight:500}
+.pick .ic{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;font-size:16px;flex:none}
+.pick .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick.on{color:var(--ink);font-weight:600}
+.pick.need{color:var(--accent);font-weight:600;animation:nudge .9s var(--ease) 2}
+@keyframes nudge{0%,100%{transform:none}30%{transform:translateX(-3px)}60%{transform:translateX(3px)}}
+.dock .keypad{gap:6px}
+.dock .key{height:clamp(40px,6.3dvh,52px);font-size:20px}
+.key.go{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-size:16px;font-weight:700;box-shadow:var(--lift)}
+.key.go:disabled{opacity:.38;box-shadow:none;cursor:default}
+.key.go:active:not(:disabled){background:var(--accent);transform:scale(.94)}
+.enter .entry>*{animation:rise .38s var(--ease) both}
+.enter .entry>.dock{animation-delay:.08s}
+body.locked .toast{bottom:auto;top:calc(env(safe-area-inset-top,0px) + 10px)}
+@media (max-height:640px){ .dock .amount{min-height:56px} .entry{gap:6px;padding-top:6px} }
 @media (hover:hover){
   .key:hover,.iconbtn:hover,.btn:hover{background:var(--accent-soft)}
   .btn.primary:hover,.submit:hover:not(:disabled),.banner button:hover{filter:brightness(1.08)}
@@ -312,7 +348,7 @@ function makeSample(){
 
 /* ---------- state & storage ---------- */
 const LS_KEY = "sothuchi.v1";
-const APP_VERSION = "1.4";
+const APP_VERSION = "1.5";
 let S, sample = false;
 function lsGet(){ try { const r = localStorage.getItem(LS_KEY); return r ? JSON.parse(r) : null; } catch(e){ return null; } }
 (function boot(){
@@ -413,34 +449,52 @@ function exprDisplay(s){ return s.replace(/\d+/g, d => NF.format(Number(d))).rep
 function updateAmount(){
   const v = evalExpr(ui.expr); const box = $("#amt"); if (!box) return;
   box.className = "amount ruled " + ui.type;
-  box.querySelector(".expr").textContent = /[+\-]/.test(ui.expr) ? exprDisplay(ui.expr) : "";
+  box.querySelector(".expr").textContent = /[+\-]/.test(ui.expr) ? exprDisplay(ui.expr) + " =" : "";
   box.querySelector(".val").textContent = fmt(Math.max(0,v));
   box.querySelector(".val").className = "val num " + (ui.type==="i"?"inc":"exp");
+  const c = ui.cat && catsOf(ui.type).find(x=>x.id===ui.cat); const pick = $("#pick");
+  if (pick){ pick.className = "pick" + (c ? " on" : (v>0 ? " need" : ""));
+    pick.innerHTML = c ? `<span class="ic" style="background:${colorOf(c)}26">${esc(c.ic)}</span><span class="nm">${esc(c.name)}</span>` : `<span class="nm">${v>0 ? "Chọn danh mục" : (ui.type==="e"?"Khoản chi":"Khoản thu")}</span>`; }
   const sb = $("#submit"); if (sb) sb.disabled = !(v > 0 && ui.cat);
+}
+const WD_SHORT = ["CN","T2","T3","T4","T5","T6","T7"];
+function shortDate(s){
+  const d = parseD(s), t = parseD(TODAY); const diff = Math.round((t - d) / 864e5);
+  const dm = pad(d.getDate()) + "/" + pad(d.getMonth()+1) + (d.getFullYear()!==t.getFullYear() ? "/" + d.getFullYear() : "");
+  return diff===0 ? "Hôm nay, " + dm : diff===1 ? "Hôm qua, " + dm : WD_SHORT[d.getDay()] + ", " + dm;
+}
+function repLabel(){
+  if (!ui.rep) return "Không lặp";
+  const d = parseD(ui.date);
+  return ui.rep==="m" ? "↻ Ngày " + d.getDate() + " hằng tháng" : "↻ " + WD_SHORT[d.getDay()] + " hằng tuần";
 }
 function renderEntry(){
   const cats = catsOf(ui.type).filter(c=>!c.hidden);
   if (!cats.find(c=>c.id===ui.cat)) ui.cat = (ui.editId ? ui.cat : null);
   const edit = ui.editId ? `<div class="editbar"><span>Đang sửa khoản ngày ${dmy(ui.date)}</span><span class="btnrow"><button class="btn danger ${ui.delArm?"armed":""}" data-act="del">${ui.delArm?"Nhấn lần nữa để xóa":"Xóa"}</button><button class="btn" data-act="cancelEdit">Hủy</button></span></div>` : "";
-  return `${bannerHTML()}
-  <div class="top"><h1>${ui.editId?"Sửa khoản":"Ghi sổ"}</h1><span class="chip ok"><i></i>Lưu trên máy</span></div>
-  <div class="stack">
+  return `<div class="entry">
+    ${bannerHTML()}
     ${edit}
-    <div class="seg type" role="group" aria-label="Loại"><button data-act="type" data-v="e" aria-pressed="${ui.type==="e"}">Tiền chi</button><button data-act="type" data-v="i" aria-pressed="${ui.type==="i"}">Tiền thu</button></div>
-    <div class="daterow"><button class="iconbtn" data-act="day" data-v="-1" aria-label="Ngày trước">‹</button>
-      <label class="datepick">${esc(longDate(ui.date))}${ui.date===TODAY?' <span class="muted small" style="margin-left:6px;font-weight:500">· hôm nay</span>':''}<input type="date" id="f-date" value="${ui.date}" aria-label="Chọn ngày"></label>
-      <button class="iconbtn" data-act="day" data-v="1" aria-label="Ngày sau">›</button></div>
-    <input class="field" id="f-note" placeholder="Ghi chú (không bắt buộc)" value="${esc(ui.note)}" autocomplete="off">
-    ${ui.editId ? "" : `<div class="repeat"><span class="small muted">Lặp lại</span><div class="seg sm" role="group" aria-label="Lặp lại"><button data-act="rep" data-v="" aria-pressed="${!ui.rep}">Không</button><button data-act="rep" data-v="m" aria-pressed="${ui.rep==="m"}">Hàng tháng</button><button data-act="rep" data-v="w" aria-pressed="${ui.rep==="w"}">Hàng tuần</button></div></div>
-    ${ui.rep ? `<div class="hint">↻ Tự ghi vào <b>${ui.rep==="m" ? "ngày "+parseD(ui.date).getDate()+" mỗi tháng" : WDS[parseD(ui.date).getDay()].toLowerCase()+" mỗi tuần"}</b>, bắt đầu từ ${dmy(ui.date)}. Quản lý trong Cài đặt.</div>` : ""}`}
-    <div id="amt" class="amount ruled"><span class="expr num"></span><span class="val num">0 đ</span></div>
-    <div class="cats">${cats.map(c=>`<button class="cat" data-act="cat" data-v="${c.id}" aria-pressed="${ui.cat===c.id}"><span class="ic" style="background:${colorOf(c)}26">${esc(c.ic)}</span><span class="nm">${esc(c.name)}</span></button>`).join("")}</div>
-    <div class="keypad">
-      ${["7","8","9","back","4","5","6","-","1","2","3","+","C","0","000","="].map(k=>{
-        const lab = k==="back"?"⌫":k==="-"?"−":k; const op = /[^0-9]/.test(k) && k!=="000";
-        return `<button class="key ${op?"op":""}" data-act="key" data-v="${k}" aria-label="${k==="back"?"Xóa một số":lab}">${lab}</button>`; }).join("")}
+    <div class="e-head">
+      <div class="seg type" role="group" aria-label="Loại"><button data-act="type" data-v="e" aria-pressed="${ui.type==="e"}">Chi</button><button data-act="type" data-v="i" aria-pressed="${ui.type==="i"}">Thu</button></div>
+      <div class="e-date"><button class="nav" data-act="day" data-v="-1" aria-label="Ngày trước">‹</button>
+        <label class="datepick">${esc(shortDate(ui.date))}<input type="date" id="f-date" value="${ui.date}" aria-label="Chọn ngày"></label>
+        <button class="nav" data-act="day" data-v="1" aria-label="Ngày sau">›</button></div>
     </div>
-    <button class="submit" id="submit" data-act="submit" disabled>${ui.editId?"Lưu thay đổi":(ui.type==="e"?"Nhập khoản chi":"Nhập khoản thu")}</button>
+    <div class="e-note">
+      <input class="field" id="f-note" placeholder="Ghi chú" value="${esc(ui.note)}" autocomplete="off" enterkeyhint="done">
+      ${ui.editId ? "" : `<button class="repchip ${ui.rep?"on":""}" data-act="repCycle" aria-label="Lặp lại: ${esc(repLabel())}">${esc(repLabel())}</button>`}
+    </div>
+    <div class="cats-scroll"><div class="cats">${cats.map(c=>`<button class="cat" data-act="cat" data-v="${c.id}" aria-pressed="${ui.cat===c.id}"><span class="ic" style="background:${colorOf(c)}26">${esc(c.ic)}</span><span class="nm">${esc(c.name)}</span></button>`).join("")}</div></div>
+    <div class="dock">
+      <div id="amt" class="amount ruled"><span id="pick" class="pick"></span><span class="amt-r"><span class="expr num"></span><span class="val num">0 đ</span></span></div>
+      <div class="keypad">
+        ${["7","8","9","back","4","5","6","-","1","2","3","+","C","0","000"].map(k=>{
+          const lab = k==="back"?"⌫":k==="-"?"−":k; const op = /[^0-9]/.test(k) && k!=="000";
+          return `<button class="key ${op?"op":""}" data-act="key" data-v="${k}" aria-label="${k==="back"?"Xóa một số":k==="C"?"Xóa hết":lab}">${lab}</button>`; }).join("")}
+        <button class="key go" id="submit" data-act="submit" disabled aria-label="${ui.editId?"Lưu thay đổi":(ui.type==="e"?"Lưu khoản chi":"Lưu khoản thu")}">Lưu</button>
+      </div>
+    </div>
   </div>`;
 }
 function pressKey(k){
@@ -734,7 +788,10 @@ function render(fromSync){
   v.innerHTML = tab==="entry" ? renderEntry() : tab==="cal" ? renderCal() : tab==="rep" ? renderRep() : renderSet();
   if (tab==="entry") updateAmount();
   document.querySelectorAll("#tabs button").forEach(b => { if (b.dataset.tab===tab) b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current"); });
+  document.body.classList.toggle("locked", tab==="entry"); fitDock();
 }
+function fitDock(){ const tb = document.querySelector(".tabbar"); if (tb) document.documentElement.style.setProperty("--dockb", tb.offsetHeight + "px"); }
+window.addEventListener("resize", fitDock);
 
 $("#tabs").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
   tab = b.dataset.tab; ui.wipeArm=false; ui.delArm=false; ui.recurArm=null; render(); window.scrollTo(0,0);
@@ -750,6 +807,7 @@ $("#view").addEventListener("click", async e => {
     case "key": pressKey(v); break;
     case "submit": submitEntry(); break;
     case "rep": ui.rep = v; render(); break;
+    case "repCycle": ui.rep = ui.rep==="" ? "m" : ui.rep==="m" ? "w" : ""; render(); if (ui.rep) toast(ui.rep==="m" ? "Khoản này sẽ tự ghi vào ngày " + parseD(ui.date).getDate() + " mỗi tháng" : "Khoản này sẽ tự ghi vào " + WDS[parseD(ui.date).getDay()].toLowerCase() + " mỗi tuần"); break;
     case "recurNew": Object.assign(ui,{rep:"m", date:TODAY, editId:null, editYm:null, expr:"", note:"", delArm:false}); tab="entry"; render(); window.scrollTo(0,0); break;
     case "recurDel":
       if (ui.recurArm !== v){ ui.recurArm = v; render(); break; }
